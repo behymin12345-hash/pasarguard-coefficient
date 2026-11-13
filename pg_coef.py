@@ -813,6 +813,10 @@ def cmd_password_token(args):
     print("Open the web panel login page -> 'Forgot password?' -> enter this token and a new password.")
 
 
+def cmd_version(args):
+    print("X-PasarGuard v%s" % VERSION)
+
+
 def cmd_password_reset(args):
     path = _config_path()
     cfg = load_json(path, DEFAULT_CONFIG)
@@ -1095,6 +1099,7 @@ def build_parser():
     # ---- management commands
     sp("update", "update X-PasarGuard from GitHub and restart the service")
     sp("status", "show service, config and panel status")
+    sp("version", "show X-PasarGuard version")
     sp("backup", "backup panel database + config + coefficients (keeps last 10)")
     s = sp("logs", "show service logs")
     s.add_argument("--follow", action="store_true", help="follow logs live (like tail -f)")
@@ -1139,6 +1144,7 @@ def main(argv=None):
         "node-set": cmd_node_set,
         "update": cmd_update,
         "status": cmd_status,
+        "version": cmd_version,
         "backup": cmd_backup,
         "logs": cmd_logs,
         "service": cmd_service,
