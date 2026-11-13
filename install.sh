@@ -36,9 +36,13 @@ done
 chmod 600 "$DEST"/*.py 2>/dev/null || true
 
 # ---------- تشخیص کانتینر دیتابیس (برای مود native)
+# توجه: pgbouncer معمولاً psql ندارد؛ اول کانتینر خود دیتابیس (timescale/postgres)
 DB_CONTAINER=""
 if command -v docker >/dev/null; then
-    DB_CONTAINER=$(docker ps --format '{{.Names}}' | grep -iE 'timescale|postgres|pgbouncer' | head -1 || true)
+    DB_CONTAINER=$(docker ps --format '{{.Names}}' | grep -iE 'timescale|postgres' | head -1 || true)
+    if [ -z "$DB_CONTAINER" ]; then
+        DB_CONTAINER=$(docker ps --format '{{.Names}}' | grep -iE 'pgbouncer' | head -1 || true)
+    fi
 fi
 
 # ---------- کانفیگ
@@ -54,7 +58,25 @@ else
     fi
     read -rp "نام کانتینر دیتابیس پنل [${DB_CONTAINER:-خالی=مود native غیرفعال}]: " DB_INPUT
     [ -n "$DB_INPUT" ] && DB_CONTAINER="$DB_INPUT"
-    if [ -n "$DB_CONTAINER" ]; then MODE="native"; else MODE="disable"; fi
+
+    # اعتبارسنجی: کانتینر باید psql داشته باشد و به دیتابیس وصل شود؛ وگرنه بین کاندیدها بگرد
+    if [ -n "$DB_CONTAINER" ] && command -v docker >/dev/null; then
+        db_ok() {
+            docker exec "$1" sh -c 'command -v psql >/dev/null 2>&1' 2>/dev/null || return 1
+            docker exec "$1" psql -U pasarguard -d pasarguard -c "SELECT 1" >/dev/null 2>&1
+        }
+        if ! db_ok "$DB_CONTAINER"; then
+            echo "⚠ کانتینر «$DB_CONTAINER» پاسخ نداد (شاید psql ندارد — مثل pgbouncer). بین کاندیدها می‌گردم..."
+            DB_CONTAINER=""
+            for cand in $(docker ps --format '{{.Names}}' | grep -iE 'timescale|postgres|pgbouncer' || true); do
+                if db_ok "$cand"; then DB_CONTAINER="$cand"; echo "✔ کانتینر «$cand» سالم است — انتخاب شد."; break; fi
+            done
+        fi
+    fi
+    if [ -n "$DB_CONTAINER" ]; then MODE="native"; else
+        MODE="disable"
+        [ -n "$DB_INPUT" ] && echo "⚠ هیچ کانتینر دیتابیس سالمی پیدا نشد → مود disable نصب شد."
+    fi
     read -rp "رمز ورود پنل ضریب (خالی = تولید تصادفی): " WEB_PASS
     [ -z "$WEB_PASS" ] && WEB_PASS=$(python3 -c "import secrets;print(secrets.token_urlsafe(9))")
     read -rp "پورت پنل ضریب [9012]: " WEB_PORT
@@ -87,6 +109,16 @@ fi
 WEB_PORT=$(python3 -c "import json;print(json.load(open('$DEST/config.json')).get('web_port',9012))")
 WEB_PASS=$(python3 -c "import json;print(json.load(open('$DEST/config.json')).get('web_password',''))")
 
+# ---------- تست اتصال به پنل قبل از اعلام موفقیت
+echo ""
+echo "🔎 تست اتصال به پنل..."
+cd "$DEST"
+if python3 pg_coef.py login-test >/dev/null 2>&1; then
+    echo "✔ اتصال به پنل پاسارگارد سالم است."
+else
+    echo "❌ اتصال به پنل ناموفق! با این فرمان جزئیات را ببینید:  cd $DEST && python3 pg_coef.py login-test"
+fi
+
 # ---------- سرویس systemd
 cat > /etc/systemd/system/${SERVICE}.service <<EOF
 [Unit]
@@ -111,8 +143,11 @@ sleep 2
 
 echo ""
 echo "=============================================="
+SERVER_IP=$(curl -s -m 5 https://api.ipify.org 2>/dev/null) || SERVER_IP=""
+[ -z "$SERVER_IP" ] && SERVER_IP=$(curl -s -m 5 https://icanhazip.com 2>/dev/null) || SERVER_IP="$SERVER_IP"
+[ -z "$SERVER_IP" ] && SERVER_IP="آیپی-سرور"
 echo "✅ نصب کامل شد"
-echo "   پنل وب:  http://$(curl -s -m 5 ifconfig.me 2>/dev/null || echo 'SERVER_IP'):$WEB_PORT"
+echo "   پنل وب:  http://$SERVER_IP:$WEB_PORT"
 echo "   رمز:     $WEB_PASS"
 echo "   مود:     $(python3 -c "import json;print(json.load(open('$DEST/config.json')).get('mode'))")"
 echo ""
