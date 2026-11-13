@@ -130,11 +130,8 @@ def merged_users():
                 eff = used
             else:
                 real_used = used
-                baseline = st.get("baseline_used")
-                if st.get("coef_applied") == k and baseline is not None:
-                    eff = pg_coef.effective_total(k, used, baseline)
-                else:
-                    eff = used  # هنوز مبنا ثبت نشده → بدون ضرب نمایش داده شود
+                eff = pg_coef.effective_from_anchors(
+                    k, used, st.get("real_anchor"), st.get("eff_anchor"))
             out.append({
                 "username": username,
                 "status": u.get("status", "?"),

@@ -156,7 +156,8 @@ class CoefStore:
             username,
             {"disabled_by_script": False, "last_used": None, "written_limit": None,
              "volume_base": None, "coef_applied": None, "baseline_used": None,
-             "real_used": None, "native_written": None},
+             "real_used": None, "native_written": None,
+             "real_anchor": None, "eff_anchor": None, "limit_anchor": None},
         )
 
     def drop_state(self, username):
@@ -342,22 +343,23 @@ class Panel:
 
 # ---------------------------------------------------------------- منطق ضریب
 
-def effective_total(k, real, baseline):
-    """مصرف مؤثر با مبنا: فقط مصرفِ بعد از ثبت ضریب ضرب می‌شود."""
-    if baseline is None or real < baseline:
-        baseline = real
-    return int(baseline + (real - baseline) * k)
+def effective_from_anchors(k, real, real_anchor, eff_anchor):
+    """مصرف مؤثر با لنگرهای پیوسته: تغییر ضریب فقط نرخ را عوض می‌کند، مقدار فعلی می‌ماند."""
+    if real_anchor is None or eff_anchor is None:
+        return int(k * real)
+    if real < real_anchor:
+        real_anchor = real  # ریست مصرف
+    return int(eff_anchor + (real - real_anchor) * k)
 
 
 def row_for_user(u, k, st, mode):
     """ساخت یک ردیف گزارش برای کاربر."""
     used = u.get("used_traffic") or 0
     limit = u.get("data_limit")
-    baseline = st.get("baseline_used")
-    if k == 1.0 or baseline is None or st.get("coef_applied") != k:
-        eff = used if k == 1.0 else k * used
+    if k == 1.0:
+        eff = used
     else:
-        eff = effective_total(k, used, baseline)
+        eff = effective_from_anchors(k, used, st.get("real_anchor"), st.get("eff_anchor"))
     if limit:
         eff_remaining = max(0, limit - eff)
         quota_text = human_size(limit / k)
@@ -446,6 +448,9 @@ def sync_once(panel, store, cfg, quiet=False, report_only=False):
                 st["volume_base"] = None
             st["coef_applied"] = None
             st["baseline_used"] = None
+            st["real_anchor"] = None
+            st["eff_anchor"] = None
+            st["limit_anchor"] = None
             continue
 
         if not limit and mode != "native":
@@ -487,39 +492,37 @@ def sync_once(panel, store, cfg, quiet=False, report_only=False):
                 base = limit  # اولین بار یا تغییر دستی حجم توسط ادمین → مبنای جدید
 
             prev_written = st.get("native_written")
-            real = st.get("real_used")
-            if prev_written is None or real is None:
+            prev_real = st.get("real_used")
+            if prev_written is None or prev_real is None:
                 real = used  # اولین sync: مصرف فعلی را واقعی فرض کن
             else:
                 delta = used - prev_written
-                real = int(real + delta) if delta >= 0 else used  # ریست مصرف
+                real = int(prev_real + delta) if delta >= 0 else used  # ریست مصرف
 
-            if st.get("coef_applied") != k:
-                # ضریب تازه ثبت/تغییر کرده → از همین لحظه: گذشته ضرب نمی‌شود
-                baseline = real
-                if used != real:
-                    panel.set_used_traffic(username, real)  # پاک کردن ضربِ قبلی
-                    used = real
-                if status == "limited" and limit:
-                    panel.modify_user(username, {"data_limit": int(limit)})  # ارزیابی دوباره وضعیت
-            else:
-                baseline = st.get("baseline_used")
-                if baseline is None or real < baseline:
-                    baseline = real  # ریست مصرف → مبنا از نو
+            ra = st.get("real_anchor")
+            ea = st.get("eff_anchor")
+            if ra is None or ea is None:
+                if st.get("baseline_used") is not None:
+                    ra = ea = st["baseline_used"]  # مهاجرت از نسخه baseline
+                else:
+                    ra = ea = real  # اولین ثبت ضریب: گذشته ضرب نمی‌شود
+            if real < ra:
+                ra = ea = real  # ریست مصرف → از نقطه فعلی ادامه
 
+            # تغییر ضریب نیازی به کار خاصی ندارد: لنگرها همان‌جا می‌مانند و فقط نرخ عوض می‌شود
             if k >= 1:
-                inflated = int(baseline + (real - baseline) * k)
+                inflated = int(ea + (real - ra) * k)
             else:
                 inflated = int(round(k * real))
             if inflated != used:
                 panel.set_used_traffic(username, inflated)
-                log("SET: panel usage of %s = %s (baseline %s + new usage x%.2f)"
-                    % (username, human_size(inflated), human_size(baseline), k), quiet)
+                log("SET: panel usage of %s = %s (anchors %s/%s, x%.2f)"
+                    % (username, human_size(inflated), human_size(ea), human_size(ra), k), quiet)
             if status == "limited" and limit and inflated < limit:
                 panel.modify_user(username, {"data_limit": int(limit)})  # ریست مصرف → فعال دوباره
             st["native_written"] = inflated
             st["real_used"] = real
-            st["baseline_used"] = baseline
+            st["real_anchor"], st["eff_anchor"] = real, inflated
             st["coef_applied"] = k
             st["volume_base"] = base
             st["last_used"] = used
@@ -535,13 +538,16 @@ def sync_once(panel, store, cfg, quiet=False, report_only=False):
 
         if chosen == "disable":
             # مود disable: حجم دست‌نخورده؛ فقط قطع/وصل با endpoint مخصوص
-            if st.get("coef_applied") != k:
-                baseline = used  # ضریب تازه ثبت/تغییر کرده → مبنا = مصرف فعلی
-            else:
-                baseline = st.get("baseline_used")
-                if baseline is None or used < baseline:
-                    baseline = used  # ریست مصرف
-            eff = int(baseline + (used - baseline) * k)
+            ra = st.get("real_anchor")
+            ea = st.get("eff_anchor")
+            if ra is None or ea is None:
+                if st.get("baseline_used") is not None:
+                    ra = ea = st["baseline_used"]  # مهاجرت از نسخه baseline
+                else:
+                    ra = ea = used  # اولین ثبت ضریب: گذشته ضرب نمی‌شود
+            if used < ra:
+                ra = ea = used  # ریست مصرف → از نقطه فعلی ادامه
+            eff = int(ea + (used - ra) * k)
             if eff >= limit:
                 if status == "active":
                     panel.set_disabled(username, True)
@@ -559,27 +565,37 @@ def sync_once(panel, store, cfg, quiet=False, report_only=False):
                 elif status != "disabled":
                     # فلگ قطع کهنه است ولی کاربر قطع نیست (مثلاً ادمین دستی وصلش کرده)
                     st["disabled_by_script"] = False
+            st["real_anchor"], st["eff_anchor"] = used, eff
             st["coef_applied"] = k
-            st["baseline_used"] = baseline
         else:
             # مود limit: data_limit طوری نوشته می‌شود که پنل خودش دقیقاً سر ضریب قطع کند
             base = st.get("volume_base")
             written = st.get("written_limit")
+            la = st.get("limit_anchor")
+            ra = st.get("real_anchor")
             if written is not None and limit != written:
-                base = limit  # ادمین دستی حجم را عوض کرده → مبنای جدید
+                # ادمین دستی حجم را عوض کرده → از همین نقطه ادامه
+                base = limit
+                la = limit
+                ra = used
                 log("INFO: volume of %s changed manually (%s); adopting new base." % (username, human_size(limit)), quiet)
             if base is None:
                 base = limit
-            if st.get("coef_applied") != k:
-                baseline = used  # ضریب تازه ثبت/تغییر کرده → مبنا = مصرف فعلی
-            else:
-                baseline = st.get("baseline_used")
-                if baseline is None or used < baseline:
-                    baseline = used  # ریست مصرف
+            if la is None or ra is None:
+                if st.get("baseline_used") is not None:
+                    ra = st["baseline_used"]  # مهاجرت از نسخه baseline
+                    la = base
+                else:
+                    la = limit
+                    ra = used
+            if used < ra:
+                ra = used      # ریست مصرف
+                la = base      # حجم کامل از نو
             if k < 1:
                 target = int(round(base / k))          # بالا بردن ثابت حجم به V/k
             else:
-                target = int(base - (k - 1) * (used - baseline))  # فقط مصرفِ بعد از مبنا ضرب می‌شود
+                # لنگر پیوسته: تغییر ضریب سقف را به ابتدا برنمی‌گرداند؛ از مقدار فعلی ادامه می‌دهد
+                target = int(la - (k - 1) * max(0, used - ra))
                 if target < used:
                     # از حد ضریب گذشته (پرش مصرف بین دو sync) → سقف را همین حالا روی مصرف فعلی ببند
                     target = int(used)
@@ -589,8 +605,10 @@ def sync_once(panel, store, cfg, quiet=False, report_only=False):
                     % (username, human_size(target), human_size(base), k), quiet)
             st["written_limit"] = target if target >= 1 else st.get("written_limit")
             st["volume_base"] = base
+            st["limit_anchor"] = target if target >= 1 else limit
+            st["real_anchor"] = used
             st["coef_applied"] = k
-            st["baseline_used"] = baseline
+            st["baseline_used"] = None
             if st.get("disabled_by_script"):
                 st["disabled_by_script"] = False
 

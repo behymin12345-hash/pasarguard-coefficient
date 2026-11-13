@@ -195,7 +195,31 @@ def main():
         out = pg("node-list", "--config", CONFIG)
         check("node-list ضریب را نشان می‌دهد", "de-node" in out and "3" in out)
 
+        print("== 15) تغییر ضریب نباید حجم را به ابتدا برگرداند (مود limit) ==")
+        write_config(mode="limit")
+        mock("POST", "/__test__/add_user", {"username": "changec", "data_limit_gb": 10})
+        pg("set", "changec", "2", "--file", COEFS)
+        pg("sync", "--config", CONFIG, "--file", COEFS, "--quiet")
+        mock("POST", "/__test__/use", {"username": "changec", "mb": 3 * 1024})
+        pg("sync", "--config", CONFIG, "--file", COEFS, "--quiet")
+        cc = state()["changec"]
+        check("حجم مؤثر changec = 7GB", cc["data_limit"] == 7 * 1024**3, str(cc["data_limit"]))
+        pg("set", "changec", "3", "--file", COEFS)
+        pg("sync", "--config", CONFIG, "--file", COEFS, "--quiet")
+        cc = state()["changec"]
+        check("بعد از تغییر ضریب، حجم مؤثر همان 7GB می‌ماند (بدون برگشتن به 10)",
+              cc["data_limit"] == 7 * 1024**3, str(cc["data_limit"]))
+        mock("POST", "/__test__/use", {"username": "changec", "mb": 1 * 1024})
+        pg("sync", "--config", CONFIG, "--file", COEFS, "--quiet")
+        cc = state()["changec"]
+        check("با ضریب جدید ادامه: حجم مؤثر = 5GB (7 − 2×1)", cc["data_limit"] == 5 * 1024**3, str(cc["data_limit"]))
+        check("changec فعال (4GB < 5GB)", cc["status"] == "active", cc["status"])
+        pg("remove", "changec", "--file", COEFS)
+        pg("sync", "--config", CONFIG, "--file", COEFS, "--quiet")
+        check("بعد از حذف ضریب، حجم پایه برگشت", state()["changec"]["data_limit"] == 10 * 1024**3)
+
         print("== 14) مبنا: ضریب فقط روی مصرفِ بعد از ثبت اعمال شود ==")
+        write_config(mode="disable")
         mock("POST", "/__test__/add_user", {"username": "basel", "data_limit_gb": 10})
         mock("POST", "/__test__/use", {"username": "basel", "mb": 5 * 1024})  # ۵ گیگ مصرف قبلی
         pg("set", "basel", "2", "--file", COEFS)
