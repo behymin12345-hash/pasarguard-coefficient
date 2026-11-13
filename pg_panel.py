@@ -252,6 +252,24 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(0.4)  # ضد بروت‌فورس ساده
             return self._send(401, {"detail": "رمز اشتباه است"})
 
+        if path == "/api/password-reset":
+            token = str(body.get("token") or "").strip()
+            new_pass = str(body.get("new_password") or "").strip()
+            if len(new_pass) < 6:
+                return self._send(400, {"detail": "رمز جدید حداقل ۶ کاراکتر است"})
+            fresh = pg_coef.load_json(CONFIG_PATH, pg_coef.DEFAULT_CONFIG)
+            pending = str(fresh.get("pending_password_token") or "")
+            expires = int(fresh.get("pending_password_expires") or 0)
+            if not pending or not secrets.compare_digest(token, pending) or time.time() > expires:
+                return self._send(400, {"detail": "توکن نامعتبر یا منقضی — روی سرور: x-pasarguard password token"})
+            with STATE.lock:
+                STATE.cfg["web_password"] = new_pass
+                STATE.cfg.pop("pending_password_token", None)
+                STATE.cfg.pop("pending_password_expires", None)
+                STATE.save_cfg()
+            STATE.tokens.clear()  # همه نشست‌ها باطل — ورود مجدد با رمز جدید
+            return self._send(200, {"ok": True})
+
         if not self._authed():
             return self._send(401, {"detail": "unauthorized"})
 

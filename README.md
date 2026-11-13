@@ -113,6 +113,42 @@ python3 pg_panel.py       # یا سرویس systemd بسازید (پایین REA
 python pg_coef.py login-test
 ```
 
+## 🛠 مدیریت سرویس (فرمان x-pasarguard)
+
+نصب‌کننده یک فرمان ثابت `x-pasarguard` می‌سازد:
+
+| فرمان | کار |
+|-------|-----|
+| `x-pasarguard status` | وضعیت سرویس، کانفیگ، اتصال به پنل |
+| `x-pasarguard update` | آپدیت از گیت‌هاب + ری‌استارت سرویس |
+| `x-pasarguard backup` | بکاپ دیتابیس پاسارگارد + کانفیگ + ضرایب (۱۰ نسخه آخر نگه‌داری می‌شود، در `/opt/pg-coef/backups`) |
+| `x-pasarguard logs` | لاگ سرویس (`--follow` برای زنده) |
+| `x-pasarguard service restart` | start / stop / restart سرویس |
+| `x-pasarguard password token` | صدور توکن یک‌بارمصرف ریست رمز (۱۵ دقیقه اعتبار) |
+| `x-pasarguard password reset --set NEW` | ریست مستقیم رمز پنل وب (root) |
+| `x-pasarguard uninstall --yes` | حذف سرویس و فرمان (`--purge` برای حذف کامل فایل‌ها) |
+| `x-pasarguard version` | نسخه فعلی |
+
+### ریست رمز پنل وب
+
+رمز پنل وب را فراموش کردی؟
+
+```bash
+x-pasarguard password token
+```
+
+توکن یک‌بارمصرف چاپ می‌شود (۱۵ دقیقه اعتبار دارد). بعد در صفحه ورود پنل وب روی **«فراموشی رمز؟»** بزن، توکن و رمز جدید را وارد کن — همه نشست‌های قبلی باطل می‌شوند.
+
+(یا مستقیم روی سرور: `x-pasarguard password reset --set NEWPASS`)
+
+### آپدیت
+
+```bash
+x-pasarguard update
+```
+
+از گیت‌هاب آپدیت می‌کند، سرویس را ری‌استارت می‌کند و نسخه جدید را چاپ می‌کند.
+
 ## پنل وب (pg_panel.py)
 
 اسکریپت یه رابط وب فارسی/RTL هم دارد:

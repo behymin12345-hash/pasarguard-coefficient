@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>پنل ضریب مصرفی | پاسارگارد</title>
+<title>X-PasarGuard | ضریب مصرفی پاسارگارد</title>
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
 <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet">
 <style>
@@ -117,16 +117,26 @@ tbody tr:hover{background:rgba(79,140,255,.05)}
 <!-- ورود -->
 <div id="login" hidden>
   <div class="card">
-    <h1>🔒 پنل ضریب مصرفی</h1>
+    <h1>🔒 X-PasarGuard</h1>
     <p>برای مدیریت ضرایب کاربران وارد شوید</p>
     <form id="loginForm">
       <div class="passrow">
         <input type="password" id="loginPass" placeholder="Password" autocomplete="current-password" autofocus>
         <button type="button" class="eye" id="eyeBtn" title="نمایش/مخفی کردن رمز">👁</button>
       </div>
-      <div class="hint">رمز لاتین است — حروف بزرگ و کوچک فرق دارند</div>
+      <div class="hint">رمز لاتین است — حروف بزرگ و کوچک فرق دارند · <a href="#" id="forgotLink" style="color:var(--accent)">فراموشی رمز؟</a></div>
       <div class="err" id="loginErr"></div>
       <button class="btn" style="width:100%;margin-top:8px" type="submit" id="loginBtn">ورود</button>
+    </form>
+    <form id="forgotForm" hidden>
+      <input type="text" id="resetToken" placeholder="Reset token" autocomplete="off" style="direction:ltr;text-align:left;margin-bottom:8px">
+      <div class="passrow">
+        <input type="password" id="newPass" placeholder="New password (min 6)" autocomplete="new-password" style="padding-left:12px">
+      </div>
+      <div class="hint">توکن را روی سرور بگیر: <span style="direction:ltr;display:inline-block">x-pasarguard password token</span></div>
+      <div class="err" id="forgotErr"></div>
+      <button class="btn" style="width:100%;margin-top:8px" type="submit" id="forgotBtn">ثبت رمز جدید</button>
+      <button class="btn ghost" style="width:100%;margin-top:8px" type="button" id="forgotBack">بازگشت</button>
     </form>
   </div>
 </div>
@@ -136,7 +146,7 @@ tbody tr:hover{background:rgba(79,140,255,.05)}
   <header>
     <div class="logo">⚖️</div>
     <div>
-      <h1>پنل ضریب مصرفی</h1>
+      <h1>X-PasarGuard</h1>
       <div class="muted" id="panelUrlLbl">—</div>
     </div>
     <div class="spacer"></div>
@@ -249,6 +259,18 @@ $('loginForm').onsubmit=async e=>{
 $('eyeBtn').onclick=()=>{
   const f=$('loginPass');
   f.type=f.type==='password'?'text':'password';
+};
+/* ---------- forgot password ---------- */
+$('forgotLink').onclick=e=>{e.preventDefault();$('loginForm').hidden=true;$('forgotForm').hidden=false;$('loginErr').textContent=''};
+$('forgotBack').onclick=()=>{$('forgotForm').hidden=true;$('loginForm').hidden=false;$('forgotErr').textContent=''};
+$('forgotForm').onsubmit=async e=>{
+  e.preventDefault();
+  $('forgotErr').textContent='';
+  try{
+    await api('/api/password-reset',{token:$('resetToken').value.trim(),new_password:$('newPass').value.trim()});
+    toast('✔ رمز جدید ثبت شد — با رمز جدید وارد شو');
+    $('forgotForm').hidden=true;$('loginForm').hidden=false;$('loginPass').value='';
+  }catch(err){$('forgotErr').textContent=err.message}
 };
 $('logoutBtn').onclick=async()=>{try{await api('/api/logout',{})}catch(e){}TOK='';sessionStorage.removeItem('pg_tok');showLogin()};
 

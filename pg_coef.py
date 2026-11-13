@@ -20,6 +20,8 @@ pg_coef.py — مدیریت ضریب مصرفی برای هر کاربر در پ
 import argparse
 import json
 import os
+import secrets
+import shutil
 import ssl
 import subprocess
 import sys
@@ -33,6 +35,9 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SCHEMA_VERSION = 1
 MODES = ("native", "disable", "limit", "report")
 PAGE_SIZE = 100
+VERSION = "1.1.0"
+REPO_RAW = "https://raw.githubusercontent.com/behymin12345-hash/pasarguard-coefficient/main"
+SERVICE_NAME = "pg-coef"
 
 # وضعیت‌هایی که اجازه داریم رویشان کار کنیم؛ بقیه (expired / on_hold / inactive ...) رد می‌شوند
 WORKABLE_STATUSES = ("active", "disabled", "limited")
@@ -622,6 +627,206 @@ def print_report(rows):
     print("Effective usage = coefficient x real usage; effective remaining = volume - effective usage")
 
 
+# ---------------------------------------------------------------- مدیریت سرویس (x-pasarguard)
+
+def _config_path():
+    return os.path.join(SCRIPT_DIR, "config.json")
+
+
+def _run_systemctl(action):
+    proc = subprocess.run(["systemctl", action, SERVICE_NAME], capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise SystemExit("Error: systemctl %s %s failed: %s" % (action, SERVICE_NAME, proc.stderr.strip()[:200]))
+    print("OK: service %s %s" % (SERVICE_NAME, action))
+
+
+def _ensure_bin_link():
+    """ساخت فرمان ثابت x-pasarguard در PATH."""
+    link = "/usr/local/bin/x-pasarguard"
+    target = os.path.join(SCRIPT_DIR, "pg_coef.py")
+    content = '#!/bin/sh\nexec python3 "%s" "$@"\n' % target
+    try:
+        old = ""
+        if os.path.exists(link):
+            with open(link, "r", encoding="utf-8", errors="replace") as f:
+                old = f.read()
+        if old != content:
+            with open(link, "w", encoding="utf-8", newline="\n") as f:
+                f.write(content)
+            os.chmod(link, 0o755)
+            print("OK: command installed -> %s" % link)
+        else:
+            print("OK: command already installed -> %s" % link)
+    except PermissionError:
+        print("WARN: could not write %s (need root). Run as root or create it manually." % link)
+
+
+def _fresh_version():
+    proc = subprocess.run([sys.executable, "-c", "import pg_coef;print(pg_coef.VERSION)"],
+                          cwd=SCRIPT_DIR, capture_output=True, text=True)
+    return proc.stdout.strip() or "?"
+
+
+def cmd_update(args):
+    dest = SCRIPT_DIR
+    changed = False
+    git_bin = shutil.which("git")
+    if git_bin and os.path.isdir(os.path.join(dest, ".git")):
+        proc = subprocess.run([git_bin, "pull", "--ff-only"], cwd=dest, capture_output=True, text=True)
+        out = (proc.stdout + proc.stderr).strip()
+        print(out[-400:] if out else "git pull done")
+        changed = proc.returncode == 0 and "Already up to date" not in out and "up to date" not in out
+        if proc.returncode != 0:
+            raise SystemExit("Error: git pull failed (local changes?). Fix manually or re-run install.")
+    else:
+        print("No git repo — downloading files from GitHub...")
+        for f in ("pg_coef.py", "pg_panel.py", "index.html"):
+            try:
+                with urllib.request.urlopen(REPO_RAW + "/" + f, timeout=30) as r:
+                    raw = r.read()
+            except Exception as e:
+                raise SystemExit("Error downloading %s: %s" % (f, e))
+            local = os.path.join(dest, f)
+            if os.path.exists(local):
+                with open(local, "rb") as fobj:
+                    if fobj.read() == raw:
+                        continue
+            with open(local, "wb") as fobj:
+                fobj.write(raw)
+            print("updated:", f)
+            changed = True
+    _ensure_bin_link()
+    if changed:
+        proc = subprocess.run(["systemctl", "is-active", SERVICE_NAME], capture_output=True, text=True)
+        if proc.stdout.strip() == "active":
+            _run_systemctl("restart")
+            print("OK: service restarted with the new version.")
+    print("Version: %s" % _fresh_version())
+
+
+def cmd_status(args):
+    cfg = load_config(_config_path())
+    print("X-PasarGuard v%s" % VERSION)
+    print("  Install dir  : %s" % SCRIPT_DIR)
+    print("  Panel URL    : %s" % cfg.get("panel_url"))
+    print("  Mode         : %s" % cfg.get("mode"))
+    print("  Sync interval: %ss" % cfg.get("interval_seconds"))
+    print("  Web panel    : port %s (%s)" % (cfg.get("web_port", 9012), "password set" if cfg.get("web_password") else "NO PASSWORD"))
+    store = CoefStore(os.path.join(SCRIPT_DIR, "coefficients.json"))
+    print("  Coefficients : %d users" % len(store.data["coefficients"]))
+    proc = subprocess.run(["systemctl", "is-active", SERVICE_NAME], capture_output=True, text=True)
+    print("  Service      : %s" % (proc.stdout.strip() or "unknown"))
+    try:
+        panel = make_panel(cfg, args)
+        n = len(panel.get_users())
+        print("  Panel API    : OK (%d users)" % n)
+    except SystemExit as e:
+        print("  Panel API    : %s" % e)
+    except ApiError as e:
+        print("  Panel API    : FAILED (%s)" % str(e)[:120])
+
+
+def cmd_backup(args):
+    dest = os.path.join(SCRIPT_DIR, "backups")
+    os.makedirs(dest, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    cfg = load_config(_config_path())
+    db_container = cfg.get("db_container") or ""
+    created = []
+    if db_container:
+        proc = subprocess.run(
+            ["docker", "exec", db_container, "pg_dump", "-U", cfg.get("db_user") or "pasarguard",
+             "-d", cfg.get("db_name") or "pasarguard"],
+            capture_output=True, timeout=120)
+        if proc.returncode == 0 and proc.stdout:
+            path = os.path.join(dest, "panel-db-%s.sql.gz" % ts)
+            with open(path, "wb") as f:
+                f.write(proc.stdout)
+            created.append(path)
+        else:
+            print("WARN: pg_dump failed: %s" % proc.stderr.decode("utf-8", "replace")[:200])
+    else:
+        print("WARN: db_container not set — panel DB not backed up.")
+    for name in ("config.json", "coefficients.json"):
+        src = os.path.join(SCRIPT_DIR, name)
+        if os.path.exists(src):
+            path = os.path.join(dest, "%s-%s.bak" % (name, ts))
+            with open(src, "rb") as fin, open(path, "wb") as fout:
+                fout.write(fin.read())
+            created.append(path)
+    # نگه‌داشتن ۱۰ بکاپ آخر
+    for prefix in ("panel-db-", "config.json-", "coefficients.json-"):
+        olds = sorted(f for f in os.listdir(dest) if f.startswith(prefix))
+        for old in olds[:-10]:
+            os.remove(os.path.join(dest, old))
+    for path in created:
+        print("created: %s" % path)
+    if not created:
+        raise SystemExit("Error: nothing was backed up.")
+
+
+def cmd_logs(args):
+    cmd = ["journalctl", "-u", SERVICE_NAME, "--no-pager"]
+    if args.follow:
+        cmd.append("-f")
+    else:
+        cmd += ["-n", str(args.n)]
+    proc = subprocess.run(cmd)
+    sys.exit(proc.returncode)
+
+
+def cmd_service(args):
+    _run_systemctl(args.action)
+
+
+def cmd_uninstall(args):
+    if not args.yes:
+        raise SystemExit("This will stop and remove the service. Add --yes to confirm (use --purge to also delete /opt files).")
+    subprocess.run(["systemctl", "stop", SERVICE_NAME], capture_output=True)
+    subprocess.run(["systemctl", "disable", SERVICE_NAME], capture_output=True)
+    unit = "/etc/systemd/system/%s.service" % SERVICE_NAME
+    if os.path.exists(unit):
+        os.remove(unit)
+    subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
+    link = "/usr/local/bin/x-pasarguard"
+    if os.path.exists(link):
+        os.remove(link)
+    print("OK: service and command removed.")
+    if args.purge:
+        shutil.rmtree(SCRIPT_DIR, ignore_errors=True)
+        print("OK: install dir deleted (%s)." % SCRIPT_DIR)
+    else:
+        print("Install dir kept (%s) — delete manually if you want a full wipe." % SCRIPT_DIR)
+
+
+def cmd_password_token(args):
+    path = _config_path()
+    cfg = load_json(path, DEFAULT_CONFIG)
+    token = secrets.token_hex(8)
+    cfg["pending_password_token"] = token
+    cfg["pending_password_expires"] = int(time.time()) + 900
+    save_json_atomic(path, cfg)
+    print("One-time password reset token (valid for 15 minutes):")
+    print("")
+    print("  %s" % token)
+    print("")
+    print("Open the web panel login page -> 'Forgot password?' -> enter this token and a new password.")
+
+
+def cmd_password_reset(args):
+    path = _config_path()
+    cfg = load_json(path, DEFAULT_CONFIG)
+    new_pass = args.set_pass or secrets.token_urlsafe(9)
+    if len(new_pass) < 6:
+        raise SystemExit("Error: password must be at least 6 characters.")
+    cfg["web_password"] = new_pass
+    cfg.pop("pending_password_token", None)
+    cfg.pop("pending_password_expires", None)
+    save_json_atomic(path, cfg)
+    print("OK: web panel password updated (effective immediately).")
+    print("New password: %s" % new_pass)
+
+
 # ---------------------------------------------------------------- فرمان‌ها
 
 def make_panel(cfg, args):
@@ -836,17 +1041,20 @@ def _add_common_args(parser, sub_level=False):
 
 def build_parser():
     p = argparse.ArgumentParser(
-        prog="pg_coef.py",
-        description="Per-user usage coefficient for PasarGuard panels - effective usage = coefficient x real usage",
+        prog="x-pasarguard",
+        description="X-PasarGuard v%s - per-user usage coefficient for PasarGuard panels" % VERSION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python pg_coef.py login-test\n"
-            "  python pg_coef.py set ali 2          (ali's usage counts double)\n"
-            "  python pg_coef.py set reza 0.5       (مصرف reza نصف حساب می‌شود = حجم دوبرابر)\n"
-            "  python pg_coef.py sync               (apply once)\n"
-            "  python pg_coef.py run                (permanent watch)\n"
-            "  python pg_coef.py report             (effective-usage table)\n"
+            "  x-pasarguard login-test\n"
+            "  x-pasarguard set ali 2               (ali's NEW usage counts double)\n"
+            "  x-pasarguard set reza 0.5            (reza's new usage counts half = double volume)\n"
+            "  x-pasarguard sync                    (apply once)\n"
+            "  x-pasarguard report                  (effective-usage table)\n"
+            "  x-pasarguard status                  (service and panel status)\n"
+            "  x-pasarguard backup                  (backup panel DB + configs)\n"
+            "  x-pasarguard update                  (update from GitHub)\n"
+            "  x-pasarguard password reset --set X  (reset web panel password)\n"
         ),
     )
     _add_common_args(p)
@@ -884,6 +1092,28 @@ def build_parser():
     s.add_argument("node", help="node name or id")
     s.add_argument("coefficient")
 
+    # ---- management commands
+    sp("update", "update X-PasarGuard from GitHub and restart the service")
+    sp("status", "show service, config and panel status")
+    sp("backup", "backup panel database + config + coefficients (keeps last 10)")
+    s = sp("logs", "show service logs")
+    s.add_argument("--follow", action="store_true", help="follow logs live (like tail -f)")
+    s.add_argument("-n", type=int, default=100, help="number of lines (default 100)")
+    s = sp("service", "control the pg-coef systemd service")
+    s.add_argument("action", choices=("start", "stop", "restart"))
+    s = sp("uninstall", "remove the service and command (files kept unless --purge)")
+    s.add_argument("--yes", action="store_true", help="do not ask, just do it")
+    s.add_argument("--purge", action="store_true", help="also delete the install directory")
+
+    s = sub.add_parser("password", help="web panel password management")
+    _add_common_args(s, sub_level=True)
+    psub = s.add_subparsers(dest="password_cmd", required=True)
+    pt = psub.add_parser("token", help="print a one-time reset token (use on the login page)")
+    pt.set_defaults(func=cmd_password_token)
+    pr = psub.add_parser("reset", help="reset the web panel password directly (root)")
+    pr.add_argument("--set", dest="set_pass", default=None, help="new password (default: generate a random one)")
+    pr.set_defaults(func=cmd_password_reset)
+
     return p
 
 
@@ -907,8 +1137,17 @@ def main(argv=None):
         "run": cmd_run,
         "node-list": cmd_node_list,
         "node-set": cmd_node_set,
+        "update": cmd_update,
+        "status": cmd_status,
+        "backup": cmd_backup,
+        "logs": cmd_logs,
+        "service": cmd_service,
+        "uninstall": cmd_uninstall,
     }
     try:
+        if args.command == "password":
+            args.func(args)
+            return 0
         handlers[args.command](args)
         return 0
     except ApiError as e:

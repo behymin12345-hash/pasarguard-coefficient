@@ -134,7 +134,32 @@ def main():
         print("== index.html ==")
         with urllib.request.urlopen(BASE + "/", timeout=10) as r:
             html = r.read().decode("utf-8")
-        check("صفحه UI سرو می‌شود", "پنل ضریب مصرفی" in html)
+        check("صفحه UI سرو می‌شود", "X-PasarGuard" in html)
+
+        print("== password reset via token ==")
+        # توکن معتبر بساز (مثل کاری که x-pasarguard password token می‌کند)
+        cfg_path = os.path.join(TMP, "config.json")
+        cfg = json.load(open(cfg_path, encoding="utf-8"))
+        import secrets as _s
+        tok_reset = _s.token_hex(8)
+        cfg["pending_password_token"] = tok_reset
+        cfg["pending_password_expires"] = int(time.time()) + 900
+        json.dump(cfg, open(cfg_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        try:
+            req("POST", "/api/password-reset", {"token": "wrong", "new_password": "newpass1"}, token=tok)
+            check("توکن غلط رد می‌شود", False)
+        except urllib.error.HTTPError as e:
+            check("توکن غلط رد می‌شود", e.code == 400)
+        _, d = req("POST", "/api/password-reset", {"token": tok_reset, "new_password": "newpass1"}, token=tok)
+        check("ریست با توکن درست ok", d.get("ok") is True)
+        # پسورد قدیمی باید باطل شده باشد
+        try:
+            req("POST", "/api/login", {"password": "test123"})
+            check("رمز قبلی باطل شد", False)
+        except urllib.error.HTTPError as e:
+            check("رمز قبلی باطل شد", e.code == 401)
+        _, d = req("POST", "/api/login", {"password": "newpass1"})
+        check("ورود با رمز جدید", bool(d.get("token")))
 
         print()
         if FAIL:

@@ -35,6 +35,13 @@ for f in pg_coef.py pg_panel.py index.html; do
 done
 chmod 600 "$DEST"/*.py 2>/dev/null || true
 
+# ---------- stable command: x-pasarguard
+cat > /usr/local/bin/x-pasarguard <<EOF
+#!/bin/sh
+exec python3 "$DEST/pg_coef.py" "\$@"
+EOF
+chmod +x /usr/local/bin/x-pasarguard
+
 # ---------- detect database container (for native mode)
 # Note: pgbouncer usually has no psql client; prefer the actual DB container
 DB_CONTAINER=""
@@ -160,7 +167,9 @@ echo "  Web panel :  http://$SERVER_IP:$WEB_PORT"
 echo "  Password  :  $WEB_PASS"
 echo "  Mode      :  $PANEL_MODE"
 echo "----------------------------------------------"
-echo "  CLI commands :  cd $DEST && python3 pg_coef.py --help"
-echo "  Service      :  systemctl status $SERVICE"
-echo "  Update later :  cd $DEST && git pull && systemctl restart $SERVICE"
+echo "  CLI        :  x-pasarguard --help"
+echo "  Status     :  x-pasarguard status"
+echo "  Update     :  x-pasarguard update"
+echo "  Backup     :  x-pasarguard backup"
+echo "  Service    :  x-pasarguard service restart"
 echo "=============================================="
