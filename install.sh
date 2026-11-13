@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================
-#  نصب پنل ضریب مصرفی برای پنل پاسارگارد (PasarGuard)
-#  استفاده:
+#  Usage coefficient panel installer for PasarGuard
+#  Usage:
 #     bash install.sh
-#  یا نصب از گیت‌هاب (روی سرور):
+#  Or from GitHub (on the panel server):
 #     curl -sL https://raw.githubusercontent.com/behymin12345-hash/pasarguard-coefficient/main/install.sh -o install.sh && sudo bash install.sh
 # ============================================================
 set -e
@@ -12,31 +12,31 @@ REPO_RAW="https://raw.githubusercontent.com/behymin12345-hash/pasarguard-coeffic
 DEST="/opt/pg-coef"
 SERVICE="pg-coef"
 
-# اگر از پایپ اجرا شده (curl ... | bash) سوال‌های تعاملی از ترمینال گرفته شوند
+# If piped (curl ... | bash), take interactive prompts from the terminal
 if [ ! -t 0 ]; then
     exec < /dev/tty 2>/dev/null || true
 fi
 
 echo "=============================================="
-echo "  پنل ضریب مصرفی پاسارگارد — نصب‌کننده"
+echo "  Usage Coefficient Panel for PasarGuard"
 echo "=============================================="
 
-# ---------- پیش‌نیازها
-if [ "$(id -u)" -ne 0 ]; then echo "❌ با root اجرا کنید (sudo bash install.sh)"; exit 1; fi
-command -v python3 >/dev/null || { echo "❌ python3 نصب نیست"; exit 1; }
-command -v curl >/dev/null || { echo "❌ curl نصب نیست (apt install curl)"; exit 1; }
+# ---------- requirements
+if [ "$(id -u)" -ne 0 ]; then echo "ERROR: run as root (sudo bash install.sh)"; exit 1; fi
+command -v python3 >/dev/null || { echo "ERROR: python3 is not installed"; exit 1; }
+command -v curl >/dev/null || { echo "ERROR: curl is not installed (apt install curl)"; exit 1; }
 
-# ---------- دانلود فایل‌ها
+# ---------- download files
 mkdir -p "$DEST"
-echo "⬇ دانلود فایل‌ها به $DEST ..."
+echo "Downloading files to $DEST ..."
 for f in pg_coef.py pg_panel.py index.html; do
     curl -sL "$REPO_RAW/$f" -o "$DEST/$f"
-    [ -s "$DEST/$f" ] || { echo "❌ دانلود $f ناموفق بود"; exit 1; }
+    [ -s "$DEST/$f" ] || { echo "ERROR: download of $f failed"; exit 1; }
 done
 chmod 600 "$DEST"/*.py 2>/dev/null || true
 
-# ---------- تشخیص کانتینر دیتابیس (برای مود native)
-# توجه: pgbouncer معمولاً psql ندارد؛ اول کانتینر خود دیتابیس (timescale/postgres)
+# ---------- detect database container (for native mode)
+# Note: pgbouncer usually has no psql client; prefer the actual DB container
 DB_CONTAINER=""
 if command -v docker >/dev/null; then
     DB_CONTAINER=$(docker ps --format '{{.Names}}' | grep -iE 'timescale|postgres' | head -1 || true)
@@ -45,41 +45,41 @@ if command -v docker >/dev/null; then
     fi
 fi
 
-# ---------- کانفیگ
+# ---------- config
 if [ -f "$DEST/config.json" ]; then
-    echo "ℹ config.json از قبل موجود است — دست‌نخورده ماند."
+    echo "INFO: config.json already exists — kept untouched."
 else
-    echo "------------ تنظیمات ------------"
-    read -rp "آدرس پنل (مثلاً https://panel.example.com:8000): " PANEL_URL
-    read -rp "API Key پنل (خالی = احراز با یوزر/پسورد): " API_KEY
+    echo "------------ Settings ------------"
+    read -rp "Panel URL (e.g. https://panel.example.com:8000): " PANEL_URL
+    read -rp "Panel API Key (empty = login with admin user/password): " API_KEY
     if [ -z "$API_KEY" ]; then
-        read -rp "یوزر ادمین پنل: " ADMIN_USER
-        read -rsp "پسورد ادمین پنل: " ADMIN_PASS; echo
+        read -rp "Panel admin username: " ADMIN_USER
+        read -rsp "Panel admin password: " ADMIN_PASS; echo
     fi
-    read -rp "نام کانتینر دیتابیس پنل [${DB_CONTAINER:-خالی=مود native غیرفعال}]: " DB_INPUT
+    read -rp "Panel DB container name [${DB_CONTAINER:-empty=native mode disabled}]: " DB_INPUT
     [ -n "$DB_INPUT" ] && DB_CONTAINER="$DB_INPUT"
 
-    # اعتبارسنجی: کانتینر باید psql داشته باشد و به دیتابیس وصل شود؛ وگرنه بین کاندیدها بگرد
+    # Validate: container must have psql and connect to the DB; otherwise scan candidates
     if [ -n "$DB_CONTAINER" ] && command -v docker >/dev/null; then
         db_ok() {
             docker exec "$1" sh -c 'command -v psql >/dev/null 2>&1' 2>/dev/null || return 1
             docker exec "$1" psql -U pasarguard -d pasarguard -c "SELECT 1" >/dev/null 2>&1
         }
         if ! db_ok "$DB_CONTAINER"; then
-            echo "⚠ کانتینر «$DB_CONTAINER» پاسخ نداد (شاید psql ندارد — مثل pgbouncer). بین کاندیدها می‌گردم..."
+            echo "WARN: container '$DB_CONTAINER' did not answer (maybe no psql — like pgbouncer). Scanning candidates..."
             DB_CONTAINER=""
             for cand in $(docker ps --format '{{.Names}}' | grep -iE 'timescale|postgres|pgbouncer' || true); do
-                if db_ok "$cand"; then DB_CONTAINER="$cand"; echo "✔ کانتینر «$cand» سالم است — انتخاب شد."; break; fi
+                if db_ok "$cand"; then DB_CONTAINER="$cand"; echo "OK: container '$cand' works — selected."; break; fi
             done
         fi
     fi
     if [ -n "$DB_CONTAINER" ]; then MODE="native"; else
         MODE="disable"
-        [ -n "$DB_INPUT" ] && echo "⚠ هیچ کانتینر دیتابیس سالمی پیدا نشد → مود disable نصب شد."
+        [ -n "$DB_INPUT" ] && echo "WARN: no healthy DB container found -> installed in 'disable' mode."
     fi
-    read -rp "رمز ورود پنل ضریب (خالی = تولید تصادفی): " WEB_PASS
+    read -rp "Web panel password (empty = generate random): " WEB_PASS
     [ -z "$WEB_PASS" ] && WEB_PASS=$(python3 -c "import secrets;print(secrets.token_urlsafe(9))")
-    read -rp "پورت پنل ضریب [9012]: " WEB_PORT
+    read -rp "Web panel port [9012]: " WEB_PORT
     [ -z "$WEB_PORT" ] && WEB_PORT=9012
 
     python3 - "$DEST/config.json" <<PYEOF
@@ -109,17 +109,7 @@ fi
 WEB_PORT=$(python3 -c "import json;print(json.load(open('$DEST/config.json')).get('web_port',9012))")
 WEB_PASS=$(python3 -c "import json;print(json.load(open('$DEST/config.json')).get('web_password',''))")
 
-# ---------- تست اتصال به پنل قبل از اعلام موفقیت
-echo ""
-echo "🔎 تست اتصال به پنل..."
-cd "$DEST"
-if python3 pg_coef.py login-test >/dev/null 2>&1; then
-    echo "✔ اتصال به پنل پاسارگارد سالم است."
-else
-    echo "❌ اتصال به پنل ناموفق! با این فرمان جزئیات را ببینید:  cd $DEST && python3 pg_coef.py login-test"
-fi
-
-# ---------- سرویس systemd
+# ---------- systemd service
 cat > /etc/systemd/system/${SERVICE}.service <<EOF
 [Unit]
 Description=PasarGuard per-user usage coefficient panel
@@ -141,26 +131,36 @@ systemctl daemon-reload
 systemctl enable --now ${SERVICE}.service >/dev/null 2>&1 || systemctl restart ${SERVICE}.service
 sleep 2
 
+# ---------- test panel connection before announcing success
 echo ""
-echo "⚠ نکته مود native: مصرف ضریبی مستقیم در دیتابیس پنل نوشته می‌شود؛"
-echo "   قبل از استفاده اولیه از پنل یک بکاپ از دیتابیس پاسارگارد بگیرید."
+echo "Testing panel connection..."
+cd "$DEST"
+if python3 pg_coef.py login-test >/dev/null 2>&1; then
+    echo "OK: panel connection works."
+else
+    echo "FAILED: panel connection! Details:  cd $DEST && python3 pg_coef.py login-test"
+fi
 
-# ---------- خلاصه نهایی (آخرِ خروجی)
+# ---------- native-mode warning
+echo ""
+echo "NOTE (native mode): multiplied usage is written directly into the panel database."
+echo "      Take a backup of the PasarGuard database before first use."
+
+# ---------- final summary (last output)
 SERVER_IP=$(curl -s -m 5 https://api.ipify.org 2>/dev/null) || SERVER_IP=""
 if [ -z "$SERVER_IP" ]; then SERVER_IP=$(curl -s -m 5 https://icanhazip.com 2>/dev/null); fi
-[ -z "$SERVER_IP" ] && SERVER_IP="آیپی-سرور"
+[ -z "$SERVER_IP" ] && SERVER_IP="SERVER_IP"
 PANEL_MODE=$(python3 -c "import json;print(json.load(open('$DEST/config.json')).get('mode'))")
 
 echo ""
-echo "╔══════════════════════════════════════════════╗"
-echo "║              ✅ نصب کامل شد                  ║"
-echo "╠══════════════════════════════════════════════╣"
-echo "║                                              ║"
-echo "║   آدرس پنل:  http://$SERVER_IP:$WEB_PORT"
-echo "║   رمز:       $WEB_PASS"
-echo "║   مود:       $PANEL_MODE"
-echo "║                                              ║"
-echo "╚══════════════════════════════════════════════╝"
-echo ""
-echo "⚠ نکته مود native: مصرف ضریبی مستقیم در دیتابیس پنل نوشته می‌شود؛"
-echo "   قبل از استفاده اولیه از پنل یک بکاپ از دیتابیس پاسارگارد بگیرید."
+echo "=============================================="
+echo "             INSTALLATION DONE"
+echo "=============================================="
+echo "  Web panel :  http://$SERVER_IP:$WEB_PORT"
+echo "  Password  :  $WEB_PASS"
+echo "  Mode      :  $PANEL_MODE"
+echo "----------------------------------------------"
+echo "  CLI commands :  cd $DEST && python3 pg_coef.py --help"
+echo "  Service      :  systemctl status $SERVICE"
+echo "  Update later :  cd $DEST && git pull && systemctl restart $SERVICE"
+echo "=============================================="

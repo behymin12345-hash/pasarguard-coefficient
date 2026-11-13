@@ -344,7 +344,7 @@ def main():
     t = threading.Thread(target=background_loop, daemon=True)
     t.start()
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    pg_coef.log("پنل ضریب روی پورت %d بالا آمد (مود %s، هر %s ثانیه sync)"
+    pg_coef.log("Coefficient panel started on port %d (mode %s, sync every %ss)"
                 % (port, STATE.cfg.get("mode"), STATE.cfg.get("interval_seconds")))
     srv.serve_forever()
 
