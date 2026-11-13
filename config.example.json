@@ -1,0 +1,17 @@
+{
+  "panel_url": "https://your-panel-domain.com:8000",
+  "admin_username": "",
+  "admin_password": "",
+  "api_key": "",
+  "mode": "native",
+  "auto_reenable": true,
+  "interval_seconds": 60,
+  "default_coefficient": 1.0,
+  "timeout_seconds": 20,
+  "verify_tls": true,
+  "db_container": "",
+  "db_user": "pasarguard",
+  "db_name": "pasarguard",
+  "web_password": "",
+  "web_port": 9012
+}

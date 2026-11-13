@@ -1,0 +1,12 @@
+# محرمانه‌ها — هرگز پابلیش نشوند
+config.json
+server-config.json
+coefficients.json
+
+# پایتون
+__pycache__/
+*.pyc
+
+# فایل‌های موقت تست
+tests/tmp*/
+tests/*.log
