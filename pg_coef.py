@@ -448,11 +448,14 @@ def sync_once(panel, store, cfg, quiet=False, report_only=False):
             st["baseline_used"] = None
             continue
 
-        if not limit:
+        if not limit and mode != "native":
+            # نامحدود در disable/limit/report: فقط گزارش (بدون حجم، قطعی معنا ندارد)
             log("WARN: user %s has unlimited volume; coefficient %.2f applies to reports only." % (username, k), quiet)
             rows.append(row_for_user(u, k, st, "report-only"))
             st["last_used"] = used
             continue
+        if not limit and mode == "native" and not report_only:
+            log("INFO: user %s has unlimited volume — new usage is shown x%.2f in the panel (no cutoff, no volume)." % (username, k), quiet)
 
         if mode == "native":
             chosen = "native"
