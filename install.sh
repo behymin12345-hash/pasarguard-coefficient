@@ -142,85 +142,25 @@ systemctl enable --now ${SERVICE}.service >/dev/null 2>&1 || systemctl restart $
 sleep 2
 
 echo ""
-echo "=============================================="
+echo "⚠ نکته مود native: مصرف ضریبی مستقیم در دیتابیس پنل نوشته می‌شود؛"
+echo "   قبل از استفاده اولیه از پنل یک بکاپ از دیتابیس پاسارگارد بگیرید."
+
+# ---------- خلاصه نهایی (آخرِ خروجی)
 SERVER_IP=$(curl -s -m 5 https://api.ipify.org 2>/dev/null) || SERVER_IP=""
-[ -z "$SERVER_IP" ] && SERVER_IP=$(curl -s -m 5 https://icanhazip.com 2>/dev/null) || SERVER_IP="$SERVER_IP"
+if [ -z "$SERVER_IP" ]; then SERVER_IP=$(curl -s -m 5 https://icanhazip.com 2>/dev/null); fi
 [ -z "$SERVER_IP" ] && SERVER_IP="آیپی-سرور"
 PANEL_MODE=$(python3 -c "import json;print(json.load(open('$DEST/config.json')).get('mode'))")
-echo "✅ نصب کامل شد"
-echo "   پنل وب:  http://$SERVER_IP:$WEB_PORT"
-echo "   رمز:     $WEB_PASS"
-echo "   مود:     $PANEL_MODE"
-echo ""
-echo "   دستورات CLI:"
-echo "     cd $DEST && python3 pg_coef.py --help"
-echo "   وضعیت سرویس:"
-echo "     systemctl status $SERVICE"
-echo "=============================================="
 
-# ---------- ارسال اختیاری خلاصه نصب به تلگرام
-read -rp "ارسال آدرس و رمز به تلگرام؟ توکن ربات (از @BotFather) را بده [خالی = رد]: " TG_TOKEN
-if [ -n "$TG_TOKEN" ]; then
-    # اگر قبلاً chat_id ذخیره شده از همان استفاده کن، وگرنه منتظر یک پیام از کاربر بمان
-    CHAT_ID=$(python3 -c "
-import json
-try:
-    cfg = json.load(open('$DEST/config.json'))
-    print(cfg.get('telegram_chat_id') or '')
-except Exception:
-    print('')
-")
-    if [ -z "$CHAT_ID" ]; then
-        echo "👉 حالا یک پیام (هر متنی، مثلاً /start) به ربات خودت بفرست تا chat id پیدا شود (تا ۴۵ ثانیه صبر می‌کنم)..."
-        for i in $(seq 1 15); do
-            CHAT_ID=$(curl -s -m 6 "https://api.telegram.org/bot${TG_TOKEN}/getUpdates" | python3 -c "
-import json, sys
-try:
-    ups = json.load(sys.stdin).get('result', [])
-    for u in reversed(ups):
-        m = u.get('message') or u.get('edited_message') or {}
-        cid = (m.get('chat') or {}).get('id')
-        if cid:
-            print(cid)
-            break
-except Exception:
-    pass
-" || true)
-            [ -n "$CHAT_ID" ] && break
-            sleep 3
-        done
-    fi
-    if [ -n "$CHAT_ID" ]; then
-        python3 - "$TG_TOKEN" "$CHAT_ID" "$SERVER_IP" "$WEB_PORT" "$WEB_PASS" "$PANEL_MODE" <<'PYEOF'
-import json, sys, urllib.request, urllib.parse
-token, chat_id, ip, port, password, mode = sys.argv[1:7]
-text = ("⚖️ پنل ضریب مصرفی پاسارگارد نصب شد\n\n"
-        f"پنل وب: http://{ip}:{port}\n"
-        f"رمز: {password}\n"
-        f"مود: {mode}\n\n"
-        "دستورات: cd /opt/pg-coef && python3 pg_coef.py --help")
-data = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode()
-req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data)
-try:
-    r = json.loads(urllib.request.urlopen(req, timeout=10).read())
-    print("✔ به تلگرام ارسال شد." if r.get("ok") else "⚠ ارسال ناموفق: %s" % r.get("description"))
-except Exception as e:
-    print("⚠ ارسال به تلگرام ناموفق:", e)
-PYEOF
-        # ذخیره برای ارسال‌های بعدی
-        python3 - "$TG_TOKEN" "$CHAT_ID" <<'PYEOF'
-import json, sys
-p = '/opt/pg-coef/config.json'
-cfg = json.load(open(p))
-cfg['telegram_bot_token'] = sys.argv[1]
-cfg['telegram_chat_id'] = sys.argv[2]
-json.dump(cfg, open(p, 'w'), ensure_ascii=False, indent=2)
-PYEOF
-        chmod 600 "$DEST/config.json"
-    else
-        echo "⚠ هیچ پیامی از ربات دریافت نشد — ارسال رد شد."
-    fi
-fi
+echo ""
+echo "╔══════════════════════════════════════════════╗"
+echo "║              ✅ نصب کامل شد                  ║"
+echo "╠══════════════════════════════════════════════╣"
+echo "║                                              ║"
+echo "║   آدرس پنل:  http://$SERVER_IP:$WEB_PORT"
+echo "║   رمز:       $WEB_PASS"
+echo "║   مود:       $PANEL_MODE"
+echo "║                                              ║"
+echo "╚══════════════════════════════════════════════╝"
 echo ""
 echo "⚠ نکته مود native: مصرف ضریبی مستقیم در دیتابیس پنل نوشته می‌شود؛"
 echo "   قبل از استفاده اولیه از پنل یک بکاپ از دیتابیس پاسارگارد بگیرید."
