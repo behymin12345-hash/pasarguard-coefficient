@@ -18,10 +18,12 @@
 ## 🚀 نصب سریع (روی سرور پنل)
 
 ```bash
-sudo bash <(curl -sL https://raw.githubusercontent.com/behymin12345-hash/pasarguard-coefficient/main/install.sh)
+curl -sL https://raw.githubusercontent.com/behymin12345-hash/pasarguard-coefficient/main/install.sh -o install.sh && sudo bash install.sh
 ```
 
 اسکریپت نصب: فایل‌ها را در `/opt/pg-coef` می‌گذارد، کانفیگ را می‌پرسد (یا کانتینر دیتابیس را خودش تشخیص می‌دهد)، سرویس systemd را می‌سازد و آدرس + رمز پنل را چاپ می‌کند.
+
+> از `bash <(curl ...)` استفاده نکنید — روی بعضی سرورها `/dev/fd` ندارند و خطای «No such file or directory» می‌دهد.
 
 ### نصب دستی
 

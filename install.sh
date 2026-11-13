@@ -3,14 +3,19 @@
 #  نصب پنل ضریب مصرفی برای پنل پاسارگارد (PasarGuard)
 #  استفاده:
 #     bash install.sh
-#  یا نصب یک‌خطی از گیت‌هاب:
-#     bash <(curl -sL https://raw.githubusercontent.com/behymin12345-hash/pasarguard-coefficient/main/install.sh)
+#  یا نصب از گیت‌هاب (روی سرور):
+#     curl -sL https://raw.githubusercontent.com/behymin12345-hash/pasarguard-coefficient/main/install.sh -o install.sh && sudo bash install.sh
 # ============================================================
 set -e
 
 REPO_RAW="https://raw.githubusercontent.com/behymin12345-hash/pasarguard-coefficient/main"
 DEST="/opt/pg-coef"
 SERVICE="pg-coef"
+
+# اگر از پایپ اجرا شده (curl ... | bash) سوال‌های تعاملی از ترمینال گرفته شوند
+if [ ! -t 0 ]; then
+    exec < /dev/tty 2>/dev/null || true
+fi
 
 echo "=============================================="
 echo "  پنل ضریب مصرفی پاسارگارد — نصب‌کننده"
